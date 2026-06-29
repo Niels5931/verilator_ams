@@ -41,8 +41,5 @@ target_include_directories(ams_lib PUBLIC
 )
 target_link_libraries(ams_lib PUBLIC ${NGSPICE_LIBRARY} yaml-cpp::yaml-cpp)
 
-# --- Examples ---
-option(AMS_BUILD_EXAMPLES "Build example AMS co-simulation projects" ON)
-if(AMS_BUILD_EXAMPLES)
-    add_subdirectory(examples/diff_pair)
-endif()
+# Examples are standalone CMake projects under examples/.
+# See examples/r_ladder_dac/ for a template.

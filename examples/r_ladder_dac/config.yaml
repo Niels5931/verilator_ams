@@ -1,0 +1,52 @@
+# R-2R ladder DAC co-simulation configuration
+pdk:
+  root: $PDK_ROOT
+  variant: sky130A
+  corner: tt
+
+top: ams_top
+
+verilog_sources:
+  - verilog/ams_top.sv
+  - verilog/dac_driver.sv
+
+analog_sources:
+  - spice/r_ladder_dac.spice
+
+mapping:
+  r_ladder_dac: r_ladder_dac
+
+spice_models: []
+
+ams_cosim:
+  clock_period_ns: 100
+  vdd: 1.8
+  spice_netlist: spice/r_ladder_dac.spice
+
+  digital_to_analog:
+    - name: b0
+      spice_source: b0
+      verilog_port: b0
+      width: 1
+      vdd: 1.8
+    - name: b1
+      spice_source: b1
+      verilog_port: b1
+      width: 1
+      vdd: 1.8
+    - name: b2
+      spice_source: b2
+      verilog_port: b2
+      width: 1
+      vdd: 1.8
+    - name: b3
+      spice_source: b3
+      verilog_port: b3
+      width: 1
+      vdd: 1.8
+
+  analog_to_digital:
+    - name: vout
+      spice_node: vout
+      verilog_port: vout
+      width: 32

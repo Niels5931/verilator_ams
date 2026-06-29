@@ -1,0 +1,8 @@
+# Build directories
+build/
+
+# Simulation artifacts
+*.vcd
+
+# Tiny Tapeout analog template has its own git repository
+ttsky-analog-template/
