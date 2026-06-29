@@ -45,11 +45,15 @@ public:
     AMSTestbench(const AMSTestbench&) = delete;
     AMSTestbench& operator=(const AMSTestbench&) = delete;
 
-    bool init(int argc, char** argv) {
+    bool init(int argc, char** argv, const std::vector<std::string>& netlist_lines = {}) {
         Verilated::commandArgs(argc, argv);
 
         if (!ngspice_->init()) return false;
-        if (!ngspice_->loadCircuitFromFile(config_.spice_netlist_path)) return false;
+        if (netlist_lines.empty()) {
+            if (!ngspice_->loadCircuitFromFile(config_.spice_netlist_path)) return false;
+        } else {
+            if (!ngspice_->loadCircuit(netlist_lines)) return false;
+        }
 
         dut_->rst_n = 0;
         for (int i = 0; i < 5; i++) {

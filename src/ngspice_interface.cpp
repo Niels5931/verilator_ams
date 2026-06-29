@@ -284,8 +284,23 @@ int NgSpiceInterface::onGetVSRCData(double* voltage, double current_time, const 
 
     std::lock_guard<std::mutex> lock(mtx_);
 
+    auto normalize = [](const std::string& s) -> std::string {
+        std::string out;
+        out.reserve(s.size());
+        for (char c : s) {
+            out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        // ngspice reports external V-source names with a leading 'v'
+        if (!out.empty() && out.front() == 'v') {
+            out.erase(out.begin());
+        }
+        return out;
+    };
+
+    std::string key = normalize(node_name);
+
     for (const auto* sig : config_.digital_to_analog()) {
-        if (sig->spice_name == node_name) {
+        if (normalize(sig->spice_name) == key) {
             auto it = digital_inputs_.find(sig->spice_name);
             if (it != digital_inputs_.end()) {
                 *voltage = it->second;

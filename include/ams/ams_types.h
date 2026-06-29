@@ -24,8 +24,9 @@ enum class SignalDirection {
 };
 
 struct AMSSignal {
-    std::string spice_name;
-    std::string verilog_name;
+    std::string name;          // human-readable signal name (optional)
+    std::string spice_name;    // ngspice source/node name
+    std::string verilog_name;  // Verilator port name
     SignalDirection direction;
     int width;
     double vdd;
