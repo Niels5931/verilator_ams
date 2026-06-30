@@ -78,8 +78,8 @@ Under the `ams_cosim` key:
 - Digital Verilog outputs drive ngspice through voltage sources declared `EXTERNAL`, e.g. `Vdigital_in Vp 0 EXTERNAL`. The `spice_source` name must match the source name.
 - Analog node names are matched case-insensitively; a leading `v` on external source names is stripped during normalization.
 - Every netlist needs a `.tran` line; ngspice is advanced one clock period per `step()` using `bg_run` / `bg_resume` breakpoints.
-- `ngSpice_Circ` does **not** pre-process `.include` directives; compose netlists in C++ instead (see `adc_sar_ladder`).
-  When composing netlists, put wrapper lines **before** an included netlist that ends with `.end`; anything after `.end` is ignored.
+- `ngSpice_Circ` does **not** pre-process `.include` directives. Expand them in C++ before passing the netlist vector (see `adc_sar_ladder`).
+  When doing so, put wrapper lines **before** an included file that ends with `.end`; anything after `.end` is ignored.
 
 ## Environment gotchas
 
