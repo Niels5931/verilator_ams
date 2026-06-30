@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -23,33 +24,43 @@ constexpr int ADC_BITS = 4;
 constexpr double VDD = 1.8;
 constexpr int CYCLES_PER_CONVERSION = 7;
 
-std::vector<std::string> loadNetlist(const std::string& path) {
+std::string trim(const std::string& s) {
+    size_t start = 0;
+    while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) ++start;
+    size_t end = s.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(s[end - 1]))) --end;
+    return s.substr(start, end - start);
+}
+
+std::vector<std::string> loadNetlistWithIncludes(const std::filesystem::path& path) {
     std::ifstream file(path);
     if (!file.is_open()) {
-        throw std::runtime_error("Cannot open netlist: " + path);
+        throw std::runtime_error("Cannot open netlist: " + path.string());
     }
 
+    std::filesystem::path base_dir = path.parent_path();
     std::vector<std::string> lines;
     std::string line;
     while (std::getline(file, line)) {
-        lines.push_back(line);
-    }
-    return lines;
-}
+        std::string trimmed = trim(line);
+        if (trimmed.size() > 8 && trimmed.substr(0, 8) == ".include") {
+            std::string include_arg = trim(trimmed.substr(8));
+            if (!include_arg.empty() && include_arg.front() == '"' && include_arg.back() == '"') {
+                include_arg = include_arg.substr(1, include_arg.size() - 2);
+            }
 
-std::vector<std::string> substitutePlaceholder(const std::vector<std::string>& netlist,
-                                               const std::string& placeholder,
-                                               const std::vector<std::string>& replacement) {
-    std::vector<std::string> result;
-    for (const auto& line : netlist) {
-        size_t pos = line.find(placeholder);
-        if (pos != std::string::npos) {
-            result.insert(result.end(), replacement.begin(), replacement.end());
+            std::filesystem::path include_path = include_arg;
+            if (include_path.is_relative()) {
+                include_path = std::filesystem::weakly_canonical(base_dir / include_path);
+            }
+
+            auto included = loadNetlistWithIncludes(include_path);
+            lines.insert(lines.end(), included.begin(), included.end());
         } else {
-            result.push_back(line);
+            lines.push_back(line);
         }
     }
-    return result;
+    return lines;
 }
 
 std::vector<std::string> substituteVin(const std::vector<std::string>& netlist, double vin) {
@@ -93,31 +104,13 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::vector<std::string> wrapper_netlist;
+    std::vector<std::string> base_netlist;
     try {
-        wrapper_netlist = loadNetlist(base_config.spice_netlist_path);
+        base_netlist = loadNetlistWithIncludes(base_config.spice_netlist_path);
     } catch (const std::exception& e) {
         std::cerr << "Failed to load netlist: " << e.what() << std::endl;
         return 1;
     }
-
-    // Pull in the actual R-2R ladder netlist from the r_ladder_dac example.
-    // The wrapper netlist lives in examples/adc_sar_ladder/spice/, and the
-    // ladder netlist is in examples/r_ladder_dac/spice/.
-    std::filesystem::path wrapper_path(base_config.spice_netlist_path);
-    std::filesystem::path ladder_path =
-        wrapper_path.parent_path() / ".." / ".." / "r_ladder_dac" / "spice" / "r_ladder_dac.spice";
-    ladder_path = std::filesystem::weakly_canonical(ladder_path);
-
-    std::vector<std::string> ladder_netlist;
-    try {
-        ladder_netlist = loadNetlist(ladder_path.string());
-    } catch (const std::exception& e) {
-        std::cerr << "Failed to load ladder netlist: " << e.what() << std::endl;
-        return 1;
-    }
-
-    auto base_netlist = substitutePlaceholder(wrapper_netlist, "{LADDER_NETLIST}", ladder_netlist);
 
     const std::vector<double> test_voltages = {0.0, 0.45, 0.9, 1.35, 1.8};
 

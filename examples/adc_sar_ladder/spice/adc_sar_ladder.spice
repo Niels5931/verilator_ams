@@ -6,4 +6,4 @@ VVIN vin 0 {VIN}
 * Ideal comparator: cmp_out = 1.8V when vin >= vout, else 0V
 Bcmp cmp_out 0 V=( V(vin) >= V(vout) ? 1.8 : 0.0 )
 
-{LADDER_NETLIST}
+.include ../../r_ladder_dac/spice/r_ladder_dac.spice
