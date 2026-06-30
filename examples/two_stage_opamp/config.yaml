@@ -1,0 +1,37 @@
+# Simulation configuration for diff_pair AMS co-simulation
+pdk:
+  root: $PDK_ROOT
+  variant: sky130A
+  corner: tt
+
+top: ams_top
+
+verilog_sources:
+  - verilog/ams_top.sv
+  - verilog/square_wave_driver.sv
+
+analog_sources:
+  - spice/diff_pair.spice
+
+mapping:
+  diff_pair: diff_pair
+
+spice_models: []
+
+ams_cosim:
+  clock_period_ns: 500
+  vdd: 1.8
+  spice_netlist: spice/diff_pair.spice
+
+  digital_to_analog:
+    - name: Vp
+      spice_source: digital_in
+      verilog_port: digital_out
+      width: 1
+      vdd: 1.8
+
+  analog_to_digital:
+    - name: VO
+      spice_node: VO
+      verilog_port: analog_in
+      width: 32
