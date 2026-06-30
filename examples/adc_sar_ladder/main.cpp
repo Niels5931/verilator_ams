@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -34,6 +35,21 @@ std::vector<std::string> loadNetlist(const std::string& path) {
         lines.push_back(line);
     }
     return lines;
+}
+
+std::vector<std::string> substitutePlaceholder(const std::vector<std::string>& netlist,
+                                               const std::string& placeholder,
+                                               const std::vector<std::string>& replacement) {
+    std::vector<std::string> result;
+    for (const auto& line : netlist) {
+        size_t pos = line.find(placeholder);
+        if (pos != std::string::npos) {
+            result.insert(result.end(), replacement.begin(), replacement.end());
+        } else {
+            result.push_back(line);
+        }
+    }
+    return result;
 }
 
 std::vector<std::string> substituteVin(const std::vector<std::string>& netlist, double vin) {
@@ -77,13 +93,31 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::vector<std::string> base_netlist;
+    std::vector<std::string> wrapper_netlist;
     try {
-        base_netlist = loadNetlist(base_config.spice_netlist_path);
+        wrapper_netlist = loadNetlist(base_config.spice_netlist_path);
     } catch (const std::exception& e) {
         std::cerr << "Failed to load netlist: " << e.what() << std::endl;
         return 1;
     }
+
+    // Pull in the actual R-2R ladder netlist from the r_ladder_dac example.
+    // The wrapper netlist lives in examples/adc_sar_ladder/spice/, and the
+    // ladder netlist is in examples/r_ladder_dac/spice/.
+    std::filesystem::path wrapper_path(base_config.spice_netlist_path);
+    std::filesystem::path ladder_path =
+        wrapper_path.parent_path() / ".." / ".." / "r_ladder_dac" / "spice" / "r_ladder_dac.spice";
+    ladder_path = std::filesystem::weakly_canonical(ladder_path);
+
+    std::vector<std::string> ladder_netlist;
+    try {
+        ladder_netlist = loadNetlist(ladder_path.string());
+    } catch (const std::exception& e) {
+        std::cerr << "Failed to load ladder netlist: " << e.what() << std::endl;
+        return 1;
+    }
+
+    auto base_netlist = substitutePlaceholder(wrapper_netlist, "{LADDER_NETLIST}", ladder_netlist);
 
     const std::vector<double> test_voltages = {0.0, 0.45, 0.9, 1.35, 1.8};
 

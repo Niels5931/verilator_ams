@@ -1,31 +1,9 @@
-* Ideal 4-bit SAR ADC with ideal R-2R ladder DAC
-* Replace {VIN} with the desired DC input voltage before loading.
+* Ideal 4-bit SAR ADC using the r_ladder_dac SPICE netlist
 
+* Analog input to convert (substituted by C++ at runtime)
 VVIN vin 0 {VIN}
 
-* Digital DAC inputs driven by Verilator via GetVSRCData callback
-Vb0 b0 0 EXTERNAL
-Vb1 b1 0 EXTERNAL
-Vb2 b2 0 EXTERNAL
-Vb3 b3 0 EXTERNAL
+* Ideal comparator: cmp_out = 1.8V when vin >= vout, else 0V
+Bcmp cmp_out 0 V=( V(vin) >= V(vout) ? 1.8 : 0.0 )
 
-* Ideal 4-bit R-2R ladder DAC: vdac = (code/16) * 1.8V
-* b3 is the MSB at the far end of the ladder; b0 is the LSB at the output.
-Rb3 b3 vdac 20k
-R32 vdac n2 10k
-Rb2 b2 n2 20k
-R21 n2 n1 10k
-Rb1 b1 n1 20k
-R10 n1 n0 10k
-Rb0 b0 n0 20k
-
-* Termination at the LSB end
-Rterm n0 0 20k
-
-* Ideal comparator: cmp_out = 1.8V when vin >= vdac, else 0V
-Bcmp cmp_out 0 V=( V(vin) >= V(vdac) ? 1.8 : 0.0 )
-
-* Transient analysis (run long enough for several conversions)
-.tran 10n 10u
-
-.end
+{LADDER_NETLIST}
