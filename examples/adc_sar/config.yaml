@@ -1,0 +1,38 @@
+# SAR ADC co-simulation configuration
+pdk:
+  root: $PDK_ROOT
+  variant: sky130A
+  corner: tt
+
+top: ams_top
+
+verilog_sources:
+  - verilog/ams_top.sv
+  - verilog/sar_adc_controller.sv
+
+analog_sources:
+  - spice/adc_sar_ideal.spice
+
+mapping:
+  adc_sar: adc_sar
+
+spice_models: []
+
+ams_cosim:
+  clock_period_ns: 100
+  vdd: 1.8
+  spice_netlist: spice/adc_sar_ideal.spice
+
+  digital_to_analog:
+    - name: dac_code
+      spice_source: dac_code
+      verilog_port: dac_code
+      width: 32
+      vdd: 1.8
+
+  analog_to_digital:
+    - name: cmp_out
+      spice_node: cmp_out
+      verilog_port: cmp_in
+      width: 1
+      vdd: 1.8
