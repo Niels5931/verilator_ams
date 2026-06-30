@@ -17,6 +17,12 @@ namespace ams {
 
 static constexpr double TIME_EPSILON = 1e-12;
 
+// ngspice callbacks are registered once per process, but each test voltage in
+// the example loops creates a fresh NgSpiceInterface/AMSTestbench. Route all
+// callbacks through the currently active instance so we never call back into a
+// destroyed object.
+static NgSpiceInterface* g_active_instance = nullptr;
+
 static int ams_send_char(char* str, int ident, void* userdata) {
     if (str) std::cerr << "[AMS-NG] " << str << std::endl;
     return 0;
@@ -24,10 +30,10 @@ static int ams_send_char(char* str, int ident, void* userdata) {
 static int ams_send_stat(char* status, int ident, void* userdata) { return 0; }
 
 static int ams_controlled_exit(int exit_status, NG_BOOL immediate, NG_BOOL quit_on, int ident, void* userdata) {
-    auto* self = static_cast<NgSpiceInterface*>(userdata);
+    auto* self = g_active_instance;
     std::cerr << "[AMS] ngspice exit: status=" << exit_status
               << " immediate=" << immediate << " quit=" << quit_on << std::endl;
-    if (!quit_on) {
+    if (!quit_on && self) {
         std::lock_guard<std::mutex> lock(self->mtx());
         self->set_sim_running(false);
         self->set_step_complete(true);
@@ -39,7 +45,8 @@ static int ams_controlled_exit(int exit_status, NG_BOOL immediate, NG_BOOL quit_
 }
 
 static int ams_send_data(pvecvaluesall data, int num_structs, int ident, void* userdata) {
-    auto* self = static_cast<NgSpiceInterface*>(userdata);
+    auto* self = g_active_instance;
+    if (!self) return 0;
     return self->onSendData(data, num_structs);
 }
 
@@ -48,13 +55,14 @@ static int ams_send_init_data(pvecinfoall data, int ident, void* userdata) {
 }
 
 static int ams_bg_thread_running(NG_BOOL not_running, int ident, void* userdata) {
-    auto* self = static_cast<NgSpiceInterface*>(userdata);
-    self->onBGThreadRunning(not_running != 0);
+    auto* self = g_active_instance;
+    if (self) self->onBGThreadRunning(not_running != 0);
     return 0;
 }
 
 static int ams_get_vsrc_data(double* voltage, double current_time, char* node_name, int ident, void* userdata) {
-    auto* self = static_cast<NgSpiceInterface*>(userdata);
+    auto* self = g_active_instance;
+    if (!self) return 0;
     return self->onGetVSRCData(voltage, current_time, node_name);
 }
 
@@ -63,7 +71,8 @@ static int ams_get_isrc_data(double* current, double current_time, char* node_na
 }
 
 static int ams_get_sync_data(double actual_time, double* delta_time, double old_delta_time, int redo_step, int ident, int location, void* userdata) {
-    auto* self = static_cast<NgSpiceInterface*>(userdata);
+    auto* self = g_active_instance;
+    if (!self) return 0;
     return self->onGetSyncData(actual_time, delta_time, old_delta_time, redo_step, location);
 }
 
@@ -85,32 +94,42 @@ NgSpiceInterface::~NgSpiceInterface() {
 bool NgSpiceInterface::init() {
     if (initialized_) return true;
 
-    int ret = ngSpice_Init(
-        ams_send_char,
-        ams_send_stat,
-        ams_controlled_exit,
-        ams_send_data,
-        ams_send_init_data,
-        ams_bg_thread_running,
-        static_cast<void*>(this)
-    );
+    // ngspice can only be initialised once per process. Keep a process-wide
+    // flag so later circuits reuse the same shared-library session.
+    static bool s_ngspice_initialized = false;
 
-    if (ret != 0) {
-        std::cerr << "[AMS] ngSpice_Init failed: " << ret << std::endl;
-        return false;
-    }
+    g_active_instance = this;
 
-    ret = ngSpice_Init_Sync(
-        ams_get_vsrc_data,
-        ams_get_isrc_data,
-        ams_get_sync_data,
-        nullptr,
-        static_cast<void*>(this)
-    );
+    if (!s_ngspice_initialized) {
+        int ret = ngSpice_Init(
+            ams_send_char,
+            ams_send_stat,
+            ams_controlled_exit,
+            ams_send_data,
+            ams_send_init_data,
+            ams_bg_thread_running,
+            nullptr
+        );
 
-    if (ret != 0) {
-        std::cerr << "[AMS] ngSpice_Init_Sync failed: " << ret << std::endl;
-        return false;
+        if (ret != 0) {
+            std::cerr << "[AMS] ngSpice_Init failed: " << ret << std::endl;
+            return false;
+        }
+
+        ret = ngSpice_Init_Sync(
+            ams_get_vsrc_data,
+            ams_get_isrc_data,
+            ams_get_sync_data,
+            nullptr,
+            nullptr
+        );
+
+        if (ret != 0) {
+            std::cerr << "[AMS] ngSpice_Init_Sync failed: " << ret << std::endl;
+            return false;
+        }
+
+        s_ngspice_initialized = true;
     }
 
     initialized_ = true;
@@ -192,6 +211,10 @@ void NgSpiceInterface::close() {
         std::lock_guard<std::mutex> lock(mtx_);
         initialized_ = false;
         sim_running_ = false;
+    }
+
+    if (g_active_instance == this) {
+        g_active_instance = nullptr;
     }
 }
 
