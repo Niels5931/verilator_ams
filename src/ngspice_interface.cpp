@@ -182,7 +182,11 @@ void NgSpiceInterface::close() {
         cv_bg_halted_.wait(lock, [this] { return bg_halted_; });
     }
 
-    ngSpice_Command(const_cast<char*>("quit"));
+    // NOTE: Do not send "quit" here. Re-initialising ngspice in the same
+    // process after a "quit" (detach) can trigger crashes or heap corruption
+    // in the shared library. The ngspice session is kept alive and re-used
+    // for subsequent circuits; process exit cleans it up.
+    // ngSpice_Command(const_cast<char*>("quit"));
 
     {
         std::lock_guard<std::mutex> lock(mtx_);
