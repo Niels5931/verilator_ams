@@ -90,4 +90,5 @@ Under the `ams_cosim` key:
   If that path is missing, `diff_pair` fails immediately.
 - `adc_sar` is self-contained (ideal DAC + comparator), so it is the better sanity check for a fresh environment.
 - `r_ladder_dac_sky130` expects `PDK_ROOT` to point to a Sky130 PDK install; it uses the `res_xhigh_po` subcircuit (instantiate with `X` prefix, `l`/`w` in microns without a `u` suffix).
+- The ngspice shared library is initialised once per process. `NgSpiceInterface` routes callbacks through the active instance so loops that create a fresh `AMSTestbench` per voltage/netlist do not call back into a destroyed object.
 - There is no test runner, linter, or formatter configured. The examples are the only executable verification.
