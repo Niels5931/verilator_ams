@@ -12,13 +12,14 @@
 #include "verilated.h"
 #include "verilated_vcd_c.h"
 
+#include "ams/ams_dpi.h"
 #include "ams/ams_types.h"
 #include "ams/ngspice_interface.h"
 
 namespace ams {
 
 template <typename VTop>
-class AMSTestbench {
+class AMSTestbench : public IAMSTestbench {
 public:
     using PortAccessor = std::function<uint32_t(const VTop*)>;
     using PortWriter = std::function<void(VTop*, uint32_t)>;
@@ -36,7 +37,7 @@ public:
         , tracing_(false)
     {}
 
-    ~AMSTestbench() {
+    virtual ~AMSTestbench() {
         if (tracing_) closeTrace();
         dut_->final();
         ngspice_->close();
@@ -45,7 +46,8 @@ public:
     AMSTestbench(const AMSTestbench&) = delete;
     AMSTestbench& operator=(const AMSTestbench&) = delete;
 
-    bool init(int argc, char** argv, const std::vector<std::string>& netlist_lines = {}) {
+    bool init(int argc, char** argv, const std::vector<std::string>& netlist_lines = {},
+              bool reset_dut = true) override {
         Verilated::commandArgs(argc, argv);
 
         if (!ngspice_->init()) return false;
@@ -55,12 +57,14 @@ public:
             if (!ngspice_->loadCircuit(netlist_lines)) return false;
         }
 
-        dut_->rst_n = 0;
-        for (int i = 0; i < 5; i++) {
-            tickDut();
+        if (reset_dut) {
+            dut_->rst_n = 0;
+            for (int i = 0; i < 5; i++) {
+                tickDut();
+            }
+            dut_->rst_n = 1;
+            dut_->eval();
         }
-        dut_->rst_n = 1;
-        dut_->eval();
 
         return true;
     }
@@ -71,20 +75,70 @@ public:
         }
     }
 
+    // Full clock-cycle step with C++ clock ownership.
+    // Kept for backward compatibility with existing C++ testbenches.
     void step() {
-        auto digital_outputs = collectDigitalOutputs();
-        AMSExchange exchange = ngspice_->step(digital_outputs);
-        applyAnalogInputs(exchange);
+        syncD2A();
+        runAnalog(config_.clock_period);
+        syncA2D();
         tickDut();
         cycle_++;
+    }
+
+    // Fine-grained AMS synchronization for UVM-driven cosimulation.
+    // The caller (UVM/SV) owns the clock and reset.
+    void syncD2A() override {
+        ngspice_->setDigitalInputs(collectDigitalOutputs());
+    }
+
+    void runAnalog(double dt) override {
+        ngspice_->runAnalog(dt);
+    }
+
+    void syncA2D() override {
+        applyAnalogInputs(ngspice_->getAnalogOutputs());
+    }
+
+    void applyAnalogInputs(const std::map<std::string, double>& analog_outputs) {
+        for (auto* sig : config_.analog_to_digital()) {
+            auto it = input_writers_.find(sig->verilog_name);
+            if (it == input_writers_.end()) continue;
+            auto vit = analog_outputs.find(sig->spice_name);
+            if (vit == analog_outputs.end()) continue;
+            double voltage = vit->second;
+            if (sig->width == 1) {
+                it->second(dut_.get(), voltage >= sig->vdd / 2.0 ? 1 : 0);
+            } else if (sig->width == 32) {
+                it->second(dut_.get(), static_cast<uint32_t>(to_fixed(voltage)));
+            } else {
+                it->second(dut_.get(), static_cast<uint32_t>(voltage));
+            }
+        }
+    }
+
+    void sync(double dt) override {
+        syncD2A();
+        runAnalog(dt);
+        syncA2D();
     }
 
     VTop* dut() { return dut_.get(); }
     NgSpiceInterface& ngspice() { return *ngspice_; }
     uint64_t cycle() const { return cycle_; }
-    double simTime() const { return cycle_ * config_.clock_period; }
+    double simTime() const override { return ngspice_->currentSimTime(); }
 
-    void openTrace(const std::string& filename, int depth = 99) {
+    double vdd() const override { return config_.vdd; }
+    double clockPeriod() const override { return config_.clock_period; }
+
+    double getVoltage(const std::string& node_name) const override {
+        return ngspice_->getVoltage(node_name);
+    }
+
+    void setVoltage(const std::string& source_name, double voltage) override {
+        ngspice_->setVoltage(source_name, voltage);
+    }
+
+    void openTrace(const std::string& filename, int depth = 99) override {
         Verilated::traceEverOn(true);
         trace_ = new VerilatedVcdC;
         dut_->trace(trace_, depth);
@@ -92,7 +146,7 @@ public:
         tracing_ = true;
     }
 
-    void closeTrace() {
+    void closeTrace() override {
         if (trace_) {
             trace_->close();
             trace_ = nullptr;
@@ -126,23 +180,6 @@ private:
             }
         }
         return outputs;
-    }
-
-    void applyAnalogInputs(const AMSExchange& exchange) {
-        for (auto* sig : config_.analog_to_digital()) {
-            auto it = input_writers_.find(sig->verilog_name);
-            if (it == input_writers_.end()) continue;
-            auto vit = exchange.analog_outputs.find(sig->spice_name);
-            if (vit == exchange.analog_outputs.end()) continue;
-            double voltage = vit->second;
-            if (sig->width == 1) {
-                it->second(dut_.get(), voltage >= sig->vdd / 2.0 ? 1 : 0);
-            } else if (sig->width == 32) {
-                it->second(dut_.get(), static_cast<uint32_t>(to_fixed(voltage)));
-            } else {
-                it->second(dut_.get(), static_cast<uint32_t>(voltage));
-            }
-        }
     }
 
     void tickDut() {

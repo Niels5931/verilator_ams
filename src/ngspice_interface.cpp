@@ -219,10 +219,29 @@ void NgSpiceInterface::close() {
 }
 
 AMSExchange NgSpiceInterface::step(const std::map<std::string, double>& digital_outputs) {
+    setDigitalInputs(digital_outputs);
+    if (!runAnalog(config_.clock_period)) {
+        return AMSExchange{};
+    }
+    AMSExchange result;
+    result.simulation_time = current_time_;
+    result.analog_outputs = getAnalogOutputs();
+    result.digital_inputs = digital_outputs;
+    return result;
+}
+
+bool NgSpiceInterface::setDigitalInputs(const std::map<std::string, double>& outputs) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    digital_inputs_ = outputs;
+    return true;
+}
+
+bool NgSpiceInterface::runAnalog(double dt) {
+    if (dt <= 0.0) return false;
+
     std::unique_lock<std::mutex> lock(mtx_);
 
-    digital_inputs_ = digital_outputs;
-    target_time_ = current_time_ + config_.clock_period;
+    target_time_ = current_time_ + dt;
     step_complete_ = false;
     bg_halted_ = false;
 
@@ -248,12 +267,51 @@ AMSExchange NgSpiceInterface::step(const std::map<std::string, double>& digital_
     cv_bg_halted_.wait(lock, [this] { return bg_halted_; });
     bg_halted_ = false;
 
-    AMSExchange result;
-    result.simulation_time = current_time_;
-    result.analog_outputs = analog_outputs_;
-    result.digital_inputs = digital_inputs_;
+    return true;
+}
 
-    return result;
+std::map<std::string, double> NgSpiceInterface::getAnalogOutputs() const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    return analog_outputs_;
+}
+
+namespace {
+
+std::string normalizeNodeName(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    if (out.size() > 2 && out.compare(0, 2, "v(") == 0 && out.back() == ')') {
+        out = out.substr(2, out.size() - 3);
+    }
+    return out;
+}
+
+} // namespace
+
+double NgSpiceInterface::getVoltage(const std::string& node_name) const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    std::string key = normalizeNodeName(node_name);
+    auto it = analog_outputs_.find(key);
+    if (it != analog_outputs_.end()) {
+        return it->second;
+    }
+    return 0.0;
+}
+
+bool NgSpiceInterface::setVoltage(const std::string& source_name, double voltage) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    std::string key = normalizeNodeName(source_name);
+    // ngspice reports external V-source names with a leading 'v'; store both
+    // the normalized key and the "v"-prefixed variant so lookups succeed
+    // regardless of how the caller names the source.
+    digital_inputs_[key] = voltage;
+    if (!key.empty() && key.front() != 'v') {
+        digital_inputs_[std::string("v") + key] = voltage;
+    }
+    return true;
 }
 
 double NgSpiceInterface::currentSimTime() const {
@@ -283,19 +341,16 @@ int NgSpiceInterface::onSendData(pvecvaluesall data, int num_structs) {
 
     if (!step_complete_ && sim_time >= target_time_ - TOLERANCE) {
         analog_outputs_.clear();
-        for (const auto* sig : config_.analog_to_digital()) {
-            std::string target_lower;
-            for (char c : sig->spice_name) target_lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            std::string vec_name_paren = "v(" + target_lower + ")";
-            for (int i = 0; i < data->veccount; i++) {
-                std::string actual_name(data->vecsa[i]->name);
-                std::string actual_lower;
-                for (char c : actual_name) actual_lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                if (actual_lower == target_lower || actual_lower == vec_name_paren) {
-                    analog_outputs_[sig->spice_name] = data->vecsa[i]->creal;
-                    break;
-                }
+        for (int i = 0; i < data->veccount; i++) {
+            if (data->vecsa[i]->is_scale) continue;
+            std::string actual_name(data->vecsa[i]->name);
+            std::string actual_lower;
+            for (char c : actual_name) actual_lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            // Strip a leading "v(" and trailing ")" wrapper if present.
+            if (actual_lower.size() > 2 && actual_lower.compare(0, 2, "v(") == 0 && actual_lower.back() == ')') {
+                actual_lower = actual_lower.substr(2, actual_lower.size() - 3);
             }
+            analog_outputs_[actual_lower] = data->vecsa[i]->creal;
         }
 
         current_time_ = sim_time;
@@ -326,11 +381,19 @@ int NgSpiceInterface::onGetVSRCData(double* voltage, double current_time, const 
 
     std::string key = normalize(node_name);
 
+    auto it = digital_inputs_.find(key);
+    if (it != digital_inputs_.end()) {
+        *voltage = it->second;
+        return 0;
+    }
+
+    // Fallback: look up by the configured spice name (preserves original
+    // capitalization used in config.yaml).
     for (const auto* sig : config_.digital_to_analog()) {
         if (normalize(sig->spice_name) == key) {
-            auto it = digital_inputs_.find(sig->spice_name);
-            if (it != digital_inputs_.end()) {
-                *voltage = it->second;
+            auto jt = digital_inputs_.find(sig->spice_name);
+            if (jt != digital_inputs_.end()) {
+                *voltage = jt->second;
                 return 0;
             }
         }

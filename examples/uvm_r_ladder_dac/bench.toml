@@ -1,0 +1,22 @@
+name = "uvm_r_ladder_dac"
+top = "ams_top"
+prefix = "Vams_top"
+uvm = true
+
+verilog = [
+    "verilog/r_ladder_dac_if.sv",
+    "verilog/dac_driver.sv",
+    "verilog/r_ladder_dac_dut.sv",
+    "verilog/ams_top.sv",
+    "tb/r_ladder_dac_test.sv",
+]
+
+config = "config.yaml"
+spice_netlist = "spice/r_ladder_dac.spice"
+
+verilator_args = [
+    "--trace",
+    "--assert",
+    "--timing",
+    "+define+UVM_NO_DPI",
+]

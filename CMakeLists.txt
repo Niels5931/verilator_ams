@@ -34,6 +34,7 @@ FetchContent_MakeAvailable(yaml-cpp)
 # --- Core AMS library ---
 add_library(ams_lib STATIC
     src/ngspice_interface.cpp
+    src/ams_dpi.cpp
 )
 target_include_directories(ams_lib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include

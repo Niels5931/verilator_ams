@@ -29,7 +29,18 @@ public:
     bool loadCircuitFromFile(const std::string& path);
     void close();
 
+    // Full step: set inputs, run one clock period, return outputs.
+    // Kept for backward compatibility with existing C++ testbenches.
     AMSExchange step(const std::map<std::string, double>& digital_outputs);
+
+    // Fine-grained phases for UVM-driven cosimulation.
+    bool setDigitalInputs(const std::map<std::string, double>& outputs);
+    bool runAnalog(double dt);
+    std::map<std::string, double> getAnalogOutputs() const;
+
+    // Direct raw access to arbitrary ngspice nodes/sources.
+    double getVoltage(const std::string& node_name) const;
+    bool setVoltage(const std::string& source_name, double voltage);
 
     double currentSimTime() const;
     bool isRunning() const;

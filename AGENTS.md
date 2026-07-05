@@ -11,6 +11,8 @@
   - `r_ladder_dac` — Ideal 4-bit R-2R ladder DAC (no PDK required).
   - `r_ladder_dac_sky130` — Sky130 resistor-based R-2R ladder DAC.
   - `adc_sar_ladder` — SAR ADC that reuses the `r_ladder_dac` SPICE netlist.
+  - `hello_world_uvm` — Standalone SystemVerilog UVM "hello world" using Verilator directly (no CMake, no ngspice).
+  - `uvm_r_ladder_dac` — UVM-driven version of `r_ladder_dac` using the DPI-C AMS bridge (`tools/ams_sim.py`).
 - `ttsky-analog-template/` is a standalone Tiny Tapeout analog-project template (its own `.git`, `info.yaml`, GitHub Actions). It is **not** wired into the CMake build.
 
 ## Build
@@ -45,6 +47,29 @@ cd examples/diff_pair
 ```
 
 The executable expects `config.yaml` as its only argument. Run it from the example directory because `spice_netlist` paths in `config.yaml` are relative to that directory.
+
+### Python build driver (experimental)
+
+`tools/ams_sim.py` is an experimental Python driver that builds and runs examples without CMake.  It reads a per-example `bench.toml` manifest, builds a shared AMS core library once, verilates the design, and links the simulator.
+
+```bash
+export UVM_ROOT=$HOME/projects/uvm/1800.2-2020.3.1/src
+./tools/ams_sim.py build uvm_r_ladder_dac
+./tools/ams_sim.py run   uvm_r_ladder_dac
+```
+
+Requires `ngspice`, `yaml-cpp`, Verilator, and UVM to be discoverable (system packages or `NGSPICE_HOME` / `YAML_CPP_HOME`).
+
+### UVM hello world
+
+`hello_world_uvm/` is built directly with Verilator, not CMake, and does not use ngspice. It requires a local Accellera UVM installation and the `UVM_ROOT` environment variable:
+
+```bash
+export UVM_ROOT=$HOME/projects/uvm/1800.2-2020.3.1/src
+./examples/hello_world_uvm/run.sh
+```
+
+The script passes `+define+UVM_NO_DPI` because the Accellera UVM HDL backdoor DPI requires a vendor-specific simulator backend. This keeps the example self-contained and fast enough for a sanity check.
 
 ## Wiring a new co-simulation
 
