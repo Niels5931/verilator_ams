@@ -56,28 +56,30 @@ inline AMSConfig loadConfig(const std::string& path) {
     config.vdd = detail::get_required<double>(cosim, "vdd");
     config.spice_netlist_path = detail::get_required<std::string>(cosim, "spice_netlist");
 
-    detail::require(cosim, "digital_to_analog");
-    for (const auto& item : cosim["digital_to_analog"]) {
-        AMSSignal sig;
-        sig.name = detail::get_optional<std::string>(item, "name", "");
-        sig.spice_name = detail::get_required<std::string>(item, "spice_source");
-        sig.verilog_name = detail::get_required<std::string>(item, "verilog_port");
-        sig.direction = SignalDirection::DIGITAL_TO_ANALOG;
-        sig.width = detail::get_required<int>(item, "width");
-        sig.vdd = detail::get_optional<double>(item, "vdd", config.vdd);
-        config.signals.push_back(sig);
+    if (cosim["digital_to_analog"]) {
+        for (const auto& item : cosim["digital_to_analog"]) {
+            AMSSignal sig;
+            sig.name = detail::get_optional<std::string>(item, "name", "");
+            sig.spice_name = detail::get_required<std::string>(item, "spice_source");
+            sig.verilog_name = detail::get_required<std::string>(item, "verilog_port");
+            sig.direction = SignalDirection::DIGITAL_TO_ANALOG;
+            sig.width = detail::get_required<int>(item, "width");
+            sig.vdd = detail::get_optional<double>(item, "vdd", config.vdd);
+            config.signals.push_back(sig);
+        }
     }
 
-    detail::require(cosim, "analog_to_digital");
-    for (const auto& item : cosim["analog_to_digital"]) {
-        AMSSignal sig;
-        sig.name = detail::get_optional<std::string>(item, "name", "");
-        sig.spice_name = detail::get_required<std::string>(item, "spice_node");
-        sig.verilog_name = detail::get_required<std::string>(item, "verilog_port");
-        sig.direction = SignalDirection::ANALOG_TO_DIGITAL;
-        sig.width = detail::get_required<int>(item, "width");
-        sig.vdd = detail::get_optional<double>(item, "vdd", config.vdd);
-        config.signals.push_back(sig);
+    if (cosim["analog_to_digital"]) {
+        for (const auto& item : cosim["analog_to_digital"]) {
+            AMSSignal sig;
+            sig.name = detail::get_optional<std::string>(item, "name", "");
+            sig.spice_name = detail::get_required<std::string>(item, "spice_node");
+            sig.verilog_name = detail::get_required<std::string>(item, "verilog_port");
+            sig.direction = SignalDirection::ANALOG_TO_DIGITAL;
+            sig.width = detail::get_required<int>(item, "width");
+            sig.vdd = detail::get_optional<double>(item, "vdd", config.vdd);
+            config.signals.push_back(sig);
+        }
     }
 
     return config;

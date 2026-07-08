@@ -22,12 +22,18 @@ module ams_top;
     end
 
     // AMS synchronization process.
-    // At the negedge we sample stable digital outputs, advance ngspice by one
-    // clock period, and apply the resulting analog inputs before the next posedge.
+    // At the negedge we sample stable digital outputs, drive them into ngspice
+    // as voltage sources, advance ngspice by one clock period, and apply the
+    // resulting analog input before the next posedge.
     always @(negedge clk) begin
-        ams_dpi_pkg::ams_sync_d2a();
+        real vdd;
+        vdd = ams_dpi_pkg::ams_get_vdd();
+        ams_dpi_pkg::ams_set_voltage("b0", b0 ? vdd : 0.0);
+        ams_dpi_pkg::ams_set_voltage("b1", b1 ? vdd : 0.0);
+        ams_dpi_pkg::ams_set_voltage("b2", b2 ? vdd : 0.0);
+        ams_dpi_pkg::ams_set_voltage("b3", b3 ? vdd : 0.0);
         ams_dpi_pkg::ams_run_analog(100.0);
-        ams_dpi_pkg::ams_sync_a2d();
+        vout = int'(ams_dpi_pkg::ams_get_voltage("vout") * 65536.0);
     end
 
     // DUT instance.

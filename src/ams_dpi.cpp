@@ -5,9 +5,14 @@
 #include <iostream>
 #include <memory>
 
+#include "ams/ams_bridge.h"
+#include "ams/ams_types.h"
+#include "ams/config_parser.h"
+
 namespace ams {
 
 static IAMSTestbench* g_active_tb = nullptr;
+static std::unique_ptr<AMSBridge> g_bridge;
 
 void ams_register_testbench(IAMSTestbench* tb) {
     g_active_tb = tb;
@@ -30,19 +35,45 @@ ams::IAMSTestbench* tb() {
 extern "C" {
 
 int ams_init(const char* config_path) {
-    (void)config_path;  // Config is loaded by the per-DUT shim before registration.
-    auto* t = tb();
-    if (!t) {
-        std::cerr << "[AMS-DPI] ams_init called before testbench registration\n";
+    // If a testbench was already registered (e.g., by a hand-written main.cpp),
+    // just initialize it.  Otherwise create an AMSBridge from the YAML config
+    // path passed from SystemVerilog.
+    auto* existing = tb();
+    if (existing) {
+        int argc = 1;
+        const char* argv[] = {"ams_sim"};
+        char** argv_mutable = const_cast<char**>(argv);
+        if (!existing->init(argc, argv_mutable, {}, false)) {
+            std::cerr << "[AMS-DPI] ams_init failed\n";
+            return 1;
+        }
+        return 0;
+    }
+
+    if (!config_path) {
+        std::cerr << "[AMS-DPI] ams_init called without a config path\n";
         return 1;
     }
-    // argc/argv are not available from DPI; pass a dummy argv.  The generated
-    // per-DUT shim already called Verilated::commandArgs from main().
+
+    ams::AMSConfig config;
+    try {
+        config = ams::loadConfig(config_path);
+    } catch (const std::exception& e) {
+        std::cerr << "[AMS-DPI] Failed to load config '" << config_path
+                  << "': " << e.what() << "\n";
+        return 1;
+    }
+
+    ams::g_bridge = std::make_unique<ams::AMSBridge>(config);
+    ams::ams_register_testbench(ams::g_bridge.get());
+
     int argc = 1;
     const char* argv[] = {"ams_sim"};
     char** argv_mutable = const_cast<char**>(argv);
-    if (!t->init(argc, argv_mutable, {}, false)) {
+    if (!ams::g_bridge->init(argc, argv_mutable, {}, false)) {
         std::cerr << "[AMS-DPI] ams_init failed\n";
+        ams::g_bridge.reset();
+        ams::ams_register_testbench(nullptr);
         return 1;
     }
     return 0;
@@ -52,13 +83,9 @@ int ams_finish() {
     auto* t = tb();
     if (!t) return 1;
     t->closeTrace();
-    return 0;
-}
-
-int ams_sync_d2a() {
-    auto* t = tb();
-    if (!t) return 1;
-    t->syncD2A();
+    // Destroy the bridge (and the ngspice session) if we created it.
+    ams::g_bridge.reset();
+    ams::ams_register_testbench(nullptr);
     return 0;
 }
 
@@ -66,20 +93,6 @@ int ams_run_analog(double dt_ns) {
     auto* t = tb();
     if (!t) return 1;
     t->runAnalog(dt_ns * 1e-9);
-    return 0;
-}
-
-int ams_sync_a2d() {
-    auto* t = tb();
-    if (!t) return 1;
-    t->syncA2D();
-    return 0;
-}
-
-int ams_sync(double dt_ns) {
-    auto* t = tb();
-    if (!t) return 1;
-    t->sync(dt_ns * 1e-9);
     return 0;
 }
 

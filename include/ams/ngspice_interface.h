@@ -45,7 +45,7 @@ public:
     double currentSimTime() const;
     bool isRunning() const;
 
-    std::mutex& mtx() { return mtx_; }
+    std::mutex& mtx() const { return mtx_; }
     void set_sim_running(bool v) { sim_running_ = v; }
     void set_step_complete(bool v) { step_complete_ = v; }
     void set_bg_halted(bool v) { bg_halted_ = v; }
@@ -60,7 +60,7 @@ public:
 private:
     AMSConfig config_;
 
-    std::mutex mtx_;
+    mutable std::mutex mtx_;
     std::condition_variable cv_step_complete_;
     std::condition_variable cv_bg_halted_;
 

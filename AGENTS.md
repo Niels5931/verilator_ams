@@ -6,13 +6,12 @@
 
 - Core AMS library: `include/ams/` + `src/ngspice_interface.cpp`.
 - Example co-simulations under `examples/`:
-  - `diff_pair` — Sky130 differential pair, digital square-wave drive.
   - `adc_sar` — Ideal 4-bit SAR ADC loop.
+  - `adc_sar_ladder` — SAR ADC that reuses the `r_ladder_dac` SPICE netlist.
   - `r_ladder_dac` — Ideal 4-bit R-2R ladder DAC (no PDK required).
   - `r_ladder_dac_sky130` — Sky130 resistor-based R-2R ladder DAC.
-  - `adc_sar_ladder` — SAR ADC that reuses the `r_ladder_dac` SPICE netlist.
-  - `hello_world_uvm` — Standalone SystemVerilog UVM "hello world" using Verilator directly (no CMake, no ngspice).
-  - `uvm_r_ladder_dac` — UVM-driven version of `r_ladder_dac` using the DPI-C AMS bridge (`tools/ams_sim.py`).
+  - `two_stage_opamp` — Sky130 differential pair, digital square-wave drive.
+  - `uvm_r_ladder_dac` — UVM-driven version of `r_ladder_dac` using the DPI-C AMS bridge (`tools/ams_sim.py`). No C++ `main.cpp`; SystemVerilog calls `ams_set_voltage` / `ams_run_analog` / `ams_get_voltage` directly.
 - `ttsky-analog-template/` is a standalone Tiny Tapeout analog-project template (its own `.git`, `info.yaml`, GitHub Actions). It is **not** wired into the CMake build.
 
 ## Build
@@ -32,46 +31,46 @@ cmake --build build
 Each example has a helper script:
 
 ```bash
-./examples/diff_pair/run.sh
+./examples/r_ladder_dac/run.sh
 ./examples/adc_sar/run.sh
 ./examples/adc_sar_ladder/run.sh
-./examples/diff_pair/run.sh --clean --verbose
+./examples/r_ladder_dac/run.sh --clean --verbose
 ```
 
 To build/run a single example manually:
 
 ```bash
-cmake --build build --target ams_sim_diff_pair
-cd examples/diff_pair
-../../build/examples/diff_pair/ams_sim_diff_pair config.yaml
+cmake --build build --target ams_sim_r_ladder_dac
+cd examples/r_ladder_dac
+../../build/examples/r_ladder_dac/ams_sim_r_ladder_dac config.yaml
 ```
 
 The executable expects `config.yaml` as its only argument. Run it from the example directory because `spice_netlist` paths in `config.yaml` are relative to that directory.
 
 ### Python build driver (experimental)
 
-`tools/ams_sim.py` is an experimental Python driver that builds and runs examples without CMake.  It reads a per-example `bench.toml` manifest, builds a shared AMS core library once, verilates the design, and links the simulator.
+`tools/ams_sim.py` is an experimental Python driver that builds and runs examples without CMake.  It reads a per-example `bench.toml` manifest, builds a shared AMS core library once, and uses Verilator's `--binary` mode to compile the simulator.
+
+For UVM examples, use the per-example `run.sh` script. `UVM_ROOT` must be defined and point to your uvm-verilator source tree:
 
 ```bash
-export UVM_ROOT=$HOME/projects/uvm/1800.2-2020.3.1/src
-./tools/ams_sim.py build uvm_r_ladder_dac
-./tools/ams_sim.py run   uvm_r_ladder_dac
+./examples/uvm_r_ladder_dac/run.sh --clean
+```
+
+Or invoke the driver directly:
+
+```bash
+UVM_ROOT=$UVM_ROOT ./tools/ams_sim.py build uvm_r_ladder_dac
+UVM_ROOT=$UVM_ROOT ./tools/ams_sim.py run   uvm_r_ladder_dac
 ```
 
 Requires `ngspice`, `yaml-cpp`, Verilator, and UVM to be discoverable (system packages or `NGSPICE_HOME` / `YAML_CPP_HOME`).
 
-### UVM hello world
-
-`hello_world_uvm/` is built directly with Verilator, not CMake, and does not use ngspice. It requires a local Accellera UVM installation and the `UVM_ROOT` environment variable:
-
-```bash
-export UVM_ROOT=$HOME/projects/uvm/1800.2-2020.3.1/src
-./examples/hello_world_uvm/run.sh
-```
-
-The script passes `+define+UVM_NO_DPI` because the Accellera UVM HDL backdoor DPI requires a vendor-specific simulator backend. This keeps the example self-contained and fast enough for a sanity check.
-
 ## Wiring a new co-simulation
+
+There are two patterns:
+
+### C++-driven (legacy examples)
 
 Look at `examples/*/main.cpp`:
 
@@ -86,6 +85,19 @@ Look at `examples/*/main.cpp`:
 
 `init()` also accepts an optional `std::vector<std::string>` netlist if you need to build/modify the SPICE text in C++ (see `adc_sar` and `adc_sar_ladder`).
 
+### SystemVerilog-driven (UVM / DPI-C)
+
+Look at `examples/uvm_r_ladder_dac/verilog/ams_top.sv`:
+
+1. Import the DPI package: `import ams_dpi_pkg::*;`.
+2. Call `ams_init(config_path)` once before time 0 to load the YAML config and start ngspice.
+3. Drive ngspice sources from SV with `ams_set_voltage(source_name, voltage)`.
+4. Advance the analog simulation with `ams_run_analog()` (one clock period per call).
+5. Read analog node values with `ams_get_voltage(node_name)`.
+6. Call `ams_finish()` at the end of simulation.
+
+The C++ side is implemented by `src/ams_dpi.cpp` + `include/ams/ams_bridge.h` (`AMSBridge`, a DUT-less implementation of `IAMSTestbench`). No per-example `main.cpp` is required.
+
 ## Config YAML semantics
 
 Under the `ams_cosim` key:
@@ -93,6 +105,7 @@ Under the `ams_cosim` key:
 - `clock_period_ns`, `vdd`, `spice_netlist` are required.
 - `digital_to_analog` entries map a Verilog output to an ngspice `EXTERNAL` voltage source.
 - `analog_to_digital` entries map an ngspice node voltage to a Verilog input.
+- `digital_to_analog` and `analog_to_digital` are optional; pure DPI-C/SV-driven co-simulations can drive and sample ngspice directly without using the C++ port accessor map.
 - `width` controls scaling:
   - `1` — logic level: `0` or `vdd`.
   - `32` — signed fixed-point Q16.16 via `to_fixed()`/`from_fixed()`.
@@ -108,11 +121,11 @@ Under the `ams_cosim` key:
 
 ## Environment gotchas
 
-- The `diff_pair` netlist hard-codes the Sky130 PDK path:
+- The `two_stage_opamp` netlist hard-codes the Sky130 PDK path:
   ```spice
-  .lib /home/niels/projects/pdk/open_pdks/sky130A/libs.tech/combined/sky130.lib.spice tt
+  .lib {PDK_ROOT}/open_pdks/sky130A/libs.tech/combined/sky130.lib.spice tt
   ```
-  If that path is missing, `diff_pair` fails immediately.
+  If the `PDK_ROOT` environment variable is not set to match this path, `two_stage_opamp` fails immediately.
 - `adc_sar` is self-contained (ideal DAC + comparator), so it is the better sanity check for a fresh environment.
 - `r_ladder_dac_sky130` expects `PDK_ROOT` to point to a Sky130 PDK install; it uses the `res_xhigh_po` subcircuit (instantiate with `X` prefix, `l`/`w` in microns without a `u` suffix).
 - The ngspice shared library is initialised once per process. `NgSpiceInterface` routes callbacks through the active instance so loops that create a fresh `AMSTestbench` per voltage/netlist do not call back into a destroyed object.

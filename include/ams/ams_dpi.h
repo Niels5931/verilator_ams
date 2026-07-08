@@ -19,10 +19,7 @@ public:
                       bool reset_dut = true) = 0;
 
     // Fine-grained AMS synchronization.
-    virtual void syncD2A() = 0;
     virtual void runAnalog(double dt) = 0;
-    virtual void syncA2D() = 0;
-    virtual void sync(double dt) = 0;
 
     // Direct analog access.
     virtual double getVoltage(const std::string& node) const = 0;
@@ -53,10 +50,7 @@ extern "C" {
 int ams_init(const char* config_path);
 int ams_finish();
 
-int ams_sync_d2a();
 int ams_run_analog(double dt_ns);
-int ams_sync_a2d();
-int ams_sync(double dt_ns);
 
 double ams_get_voltage(const char* node_name);
 int ams_set_voltage(const char* source_name, double voltage);

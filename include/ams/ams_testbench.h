@@ -87,7 +87,7 @@ public:
 
     // Fine-grained AMS synchronization for UVM-driven cosimulation.
     // The caller (UVM/SV) owns the clock and reset.
-    void syncD2A() override {
+    void syncD2A() {
         ngspice_->setDigitalInputs(collectDigitalOutputs());
     }
 
@@ -95,7 +95,7 @@ public:
         ngspice_->runAnalog(dt);
     }
 
-    void syncA2D() override {
+    void syncA2D() {
         applyAnalogInputs(ngspice_->getAnalogOutputs());
     }
 
@@ -116,7 +116,7 @@ public:
         }
     }
 
-    void sync(double dt) override {
+    void sync(double dt) {
         syncD2A();
         runAnalog(dt);
         syncA2D();

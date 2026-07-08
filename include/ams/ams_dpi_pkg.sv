@@ -3,12 +3,8 @@ package ams_dpi_pkg;
   import "DPI-C" function int  ams_init        (string config_path);
   import "DPI-C" function int  ams_finish      ();
 
-  // Fine-grained analog synchronization.  The UVM testbench composes these
-  // with its own clocking/reset agents.
-  import "DPI-C" function int  ams_sync_d2a    ();           // DUT outputs -> ngspice sources
-  import "DPI-C" function int  ams_run_analog  (real dt_ns); // advance ngspice by dt_ns
-  import "DPI-C" function int  ams_sync_a2d    ();           // ngspice nodes -> DUT inputs
-  import "DPI-C" function int  ams_sync        (real dt_ns); // d2a + run + a2d convenience
+  // Fine-grained analog synchronization.
+  import "DPI-C" function int  ams_run_analog  (real dt_ns);
 
   // Direct raw access to arbitrary ngspice nodes/sources.
   import "DPI-C" function real ams_get_voltage (string spice_node);

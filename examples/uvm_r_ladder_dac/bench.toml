@@ -12,7 +12,6 @@ verilog = [
 ]
 
 config = "config.yaml"
-spice_netlist = "spice/r_ladder_dac.spice"
 
 verilator_args = [
     "--trace",

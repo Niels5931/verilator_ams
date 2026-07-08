@@ -2,8 +2,9 @@
 """AMS build and run driver for Verilator + UVM + ngspice cosimulation.
 
 This script replaces per-example CMakeLists.txt files.  Each example provides a
-bench.yaml manifest; the driver discovers tools, builds a shared AMS core
-library once, verilates the example, and links the final simulator.
+bench.toml manifest; the driver discovers tools, builds a shared AMS core
+library once, verilates + compiles + links each example with Verilator's
+--binary mode, and runs the resulting simulator.
 
 Usage:
     ./tools/ams_sim.py build uvm_r_ladder_dac
@@ -51,6 +52,32 @@ def find_program(name):
     if path is None:
         raise RuntimeError(f"Required program not found: {name}")
     return Path(path)
+
+
+def find_verilator_root(verilator_bin):
+    """Return the Verilator root directory (contains share/verilator/include)."""
+    try:
+        root = subprocess.check_output(
+            [str(verilator_bin), "--getenv", "VERILATOR_ROOT"],
+            text=True,
+        ).strip()
+        if root:
+            return Path(root)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+
+    # Fall back to the resolved binary's install layout:
+    #   <prefix>/bin/verilator -> <prefix>/share/verilator
+    resolved = verilator_bin.resolve()
+    candidate = resolved.parent.parent / "share" / "verilator"
+    if candidate.is_dir():
+        return candidate
+
+    candidate = resolved.parent / "share" / "verilator"
+    if candidate.is_dir():
+        return candidate
+
+    raise RuntimeError(f"Cannot determine Verilator root from {verilator_bin}")
 
 
 def find_ngspice():
@@ -128,8 +155,10 @@ def get_cxx():
 
 
 def discover_deps():
+    verilator_bin = find_program("verilator")
     return {
-        "verilator": find_program("verilator"),
+        "verilator": verilator_bin,
+        "verilator_root": find_verilator_root(verilator_bin),
         "cxx": get_cxx(),
         "uvm_root": find_uvm(),
         "ngspice_inc": find_ngspice(),
@@ -158,7 +187,7 @@ def build_core_lib(deps, force=False):
         obj = core_dir / (Path(src).stem + ".o")
         objects.append(obj)
         run_cmd([
-            deps["cxx"], "-std=c++17", "-fPIC", "-O2", "-c",
+            deps["cxx"], "-std=c++17", "-fcoroutines", "-fPIC", "-O2", "-c",
             *inc_flags,
             str(REPO_ROOT / src),
             "-o", str(obj),
@@ -191,8 +220,8 @@ def resolve_sources(example_dir, bench, deps):
     return sources
 
 
-def verilate(example_dir, bench, build_dir, deps):
-    """Run Verilator to generate C++ model."""
+def build_binary(example_dir, bench, build_dir, deps, core_lib):
+    """Run Verilator --binary to verilate, compile, and link the simulator."""
     verilator_dir = build_dir / "verilator"
     verilator_dir.mkdir(parents=True, exist_ok=True)
 
@@ -201,9 +230,26 @@ def verilate(example_dir, bench, build_dir, deps):
     uvm_root = deps["uvm_root"]
     ams_inc = REPO_ROOT / "include" / "ams"
 
+    ng_inc, ng_lib, ng_libs = deps["ngspice_inc"]
+    yc_inc, yc_lib, yc_libs = deps["yaml_cpp"]
+
+    cflags = [
+        f"-I{REPO_ROOT / 'include'}",
+        f"-I{deps['verilator_root'] / 'include' / 'vltstd'}",
+    ]
+    for d in ng_inc + yc_inc:
+        cflags.append(f"-I{d}")
+
+    ldflags = [str(core_lib)]
+    for d in ng_lib + yc_lib:
+        ldflags.extend(["-L", d])
+    ldflags.extend(ng_libs)
+    ldflags.extend(yc_libs)
+    ldflags.extend(["-lpthread", "-ldl"])
+
     cmd = [
         str(deps["verilator"]),
-        "--cc",
+        "--binary",
         "--top-module", top,
         "--prefix", prefix,
         "-Mdir", str(verilator_dir),
@@ -214,7 +260,13 @@ def verilate(example_dir, bench, build_dir, deps):
         f"+incdir+{uvm_root}",
         f"+incdir+{ams_inc}",
         "+define+UVM_NO_DPI",
+        "--build-jobs", str(os.cpu_count() or 4),
     ]
+
+    for flag in cflags:
+        cmd.extend(["-CFLAGS", flag])
+    for flag in ldflags:
+        cmd.extend(["-LDFLAGS", flag])
 
     for arg in bench.get("verilator_args", []):
         cmd.append(arg)
@@ -223,59 +275,7 @@ def verilate(example_dir, bench, build_dir, deps):
         cmd.append(str(src))
 
     run_cmd(cmd, cwd=example_dir)
-    return verilator_dir, prefix
-
-
-def compile_example(example_dir, bench, build_dir, deps, core_lib):
-    """Compile main.cpp + Verilated sources and link the simulator."""
-    top = bench["top"]
-    prefix = bench.get("prefix", f"V{top}")
-    verilator_dir = build_dir / "verilator"
-
-    ng_inc, ng_lib, ng_libs = deps["ngspice_inc"]
-    yc_inc, yc_lib, yc_libs = deps["yaml_cpp"]
-
-    inc_flags = ["-I", str(verilator_dir)]
-    for d in [str(REPO_ROOT / "include"), str(deps["verilator"].parent / "share" / "verilator" / "include")] + ng_inc + yc_inc:
-        inc_flags.extend(["-I", d])
-
-    lib_flags = [str(core_lib)]
-    for d in ng_lib + yc_lib:
-        lib_flags.extend(["-L", d])
-    lib_flags.extend(ng_libs)
-    lib_flags.extend(yc_libs)
-    lib_flags.extend(["-lpthread", "-ldl"])
-
-    objects = []
-
-    # Compile main.cpp
-    main_obj = build_dir / "main.o"
-    objects.append(main_obj)
-    run_cmd([
-        deps["cxx"], "-std=c++17", "-O2", "-c",
-        *inc_flags,
-        str(example_dir / "main.cpp"),
-        "-o", str(main_obj),
-    ])
-
-    # Compile Verilated sources.
-    for src in [f"{prefix}.cpp", f"{prefix}__Trace__0.cpp", f"{prefix}__Trace__0__Slow.cpp",
-                f"{prefix}__Syms.cpp"]:
-        src_path = verilator_dir / src
-        if not src_path.exists():
-            continue
-        obj = build_dir / (src.stem + ".o")
-        objects.append(obj)
-        run_cmd([
-            deps["cxx"], "-std=c++17", "-O2", "-c",
-            *inc_flags,
-            str(src_path),
-            "-o", str(obj),
-        ])
-
-    # Link.
-    exe = build_dir / f"ams_sim_{bench['name']}"
-    run_cmd([deps["cxx"], "-std=c++17", *map(str, objects), *lib_flags, "-o", str(exe)])
+    exe = verilator_dir / prefix
     return exe
 
 
@@ -287,18 +287,20 @@ def build_example(example, force_core=False):
 
     deps = discover_deps()
     core_lib = build_core_lib(deps, force=force_core)
-    verilate(example_dir, bench, build_dir, deps)
-    exe = compile_example(example_dir, bench, build_dir, deps, core_lib)
+    exe = build_binary(example_dir, bench, build_dir, deps, core_lib)
     print(f"[AMS] Built: {exe}")
     return exe
 
 
 def run_example(example):
     bench = load_bench(example)
-    exe = BUILD_ROOT / example / f"ams_sim_{bench['name']}"
+    example_dir = REPO_ROOT / "examples" / example
+    build_dir = BUILD_ROOT / example
+    verilator_dir = build_dir / "verilator"
+    prefix = bench.get("prefix", f"V{bench['top']}")
+    exe = verilator_dir / prefix
     if not exe.exists():
         exe = build_example(example)
-    example_dir = REPO_ROOT / "examples" / example
     config = bench.get("config", "config.yaml")
     run_cmd([str(exe), config], cwd=example_dir)
 
