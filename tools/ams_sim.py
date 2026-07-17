@@ -274,8 +274,15 @@ def build_binary(example_dir, bench, build_dir, deps, core_lib):
     for src in resolve_sources(example_dir, bench, deps):
         cmd.append(str(src))
 
-    run_cmd(cmd, cwd=example_dir)
     exe = verilator_dir / prefix
+    # Verilator's generated Makefile does not track external -LDFLAGS files as
+    # dependencies, so changing the core library would not trigger a relink.
+    # If the core library is newer than the executable, remove the executable
+    # so Verilator is forced to relink it.
+    if exe.exists() and core_lib.exists() and core_lib.stat().st_mtime > exe.stat().st_mtime:
+        exe.unlink()
+
+    run_cmd(cmd, cwd=example_dir)
     return exe
 
 

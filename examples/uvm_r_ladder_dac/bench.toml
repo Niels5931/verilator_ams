@@ -5,8 +5,8 @@ uvm = true
 
 verilog = [
     "verilog/r_ladder_dac_if.sv",
-    "verilog/dac_driver.sv",
     "verilog/r_ladder_dac_dut.sv",
+    "tb/r_ladder_dac_pkg/r_ladder_dac_pkg.sv",
     "verilog/ams_top.sv",
     "tb/r_ladder_dac_test.sv",
 ]
@@ -18,4 +18,5 @@ verilator_args = [
     "--assert",
     "--timing",
     "+define+UVM_NO_DPI",
+    "+incdir+tb/r_ladder_dac_pkg",
 ]

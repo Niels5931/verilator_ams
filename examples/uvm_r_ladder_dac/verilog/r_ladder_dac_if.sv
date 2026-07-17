@@ -3,6 +3,7 @@ interface r_ladder_dac_if (
     input logic rst_n
 );
     logic [31:0] vout;
+    logic [3:0]  code;
     logic        b0;
     logic        b1;
     logic        b2;

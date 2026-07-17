@@ -11,7 +11,7 @@
   - `r_ladder_dac` — Ideal 4-bit R-2R ladder DAC (no PDK required).
   - `r_ladder_dac_sky130` — Sky130 resistor-based R-2R ladder DAC.
   - `two_stage_opamp` — Sky130 differential pair, digital square-wave drive.
-  - `uvm_r_ladder_dac` — UVM-driven version of `r_ladder_dac` using the DPI-C AMS bridge (`tools/ams_sim.py`). No C++ `main.cpp`; SystemVerilog calls `ams_set_voltage` / `ams_run_analog` / `ams_get_voltage` directly.
+  - `uvm_r_ladder_dac` — UVM-driven version of `r_ladder_dac` using the DPI-C AMS bridge (`tools/ams_sim.py`). No C++ `main.cpp`; a UVM agent (sequence, driver, monitor, and coverage subscriber) drives the 4-bit DAC codes and checks the analog output.
 - `ttsky-analog-template/` is a standalone Tiny Tapeout analog-project template (its own `.git`, `info.yaml`, GitHub Actions). It is **not** wired into the CMake build.
 
 ## Build
@@ -87,13 +87,13 @@ Look at `examples/*/main.cpp`:
 
 ### SystemVerilog-driven (UVM / DPI-C)
 
-Look at `examples/uvm_r_ladder_dac/verilog/ams_top.sv`:
+Look at `examples/uvm_r_ladder_dac/`:
 
 1. Import the DPI package: `import ams_dpi_pkg::*;`.
-2. Call `ams_init(config_path)` once before time 0 to load the YAML config and start ngspice.
-3. Drive ngspice sources from SV with `ams_set_voltage(source_name, voltage)`.
-4. Advance the analog simulation with `ams_run_analog()` (one clock period per call).
-5. Read analog node values with `ams_get_voltage(node_name)`.
+2. Call `ams_init(config_path)` once in the test `start_of_simulation_phase()` to load the YAML config and start ngspice. Calling it in `run_phase` races the driver, which samples `ams_get_vdd()` at the start of its own `run_phase` and would see `0`.
+3. A UVM sequence (`r_ladder_dac_ramp_sequence`) sends 4-bit DAC codes to the agent's sequencer.
+4. The UVM driver drives `vif.code`, pushes the code into ngspice with `ams_set_voltage`, advances the analog simulation with `ams_run_analog()` (one clock period per call), and captures `ams_get_voltage("vout")`.
+5. The monitor receives the driver's result transaction via a TLM analysis port, checks the output against `vdd*code/16`, and forwards it to the coverage collector.
 6. Call `ams_finish()` at the end of simulation.
 
 The C++ side is implemented by `src/ams_dpi.cpp` + `include/ams/ams_bridge.h` (`AMSBridge`, a DUT-less implementation of `IAMSTestbench`). No per-example `main.cpp` is required.
