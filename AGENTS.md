@@ -11,7 +11,7 @@
   - `r_ladder_dac` — Ideal 4-bit R-2R ladder DAC (no PDK required).
   - `r_ladder_dac_sky130` — Sky130 resistor-based R-2R ladder DAC.
   - `two_stage_opamp` — Sky130 differential pair, digital square-wave drive.
-  - `uvm_r_ladder_dac` — UVM-driven version of `r_ladder_dac` using the DPI-C AMS bridge (`tools/ams_sim.py`). No C++ `main.cpp`; a UVM agent (sequence, driver, monitor, and coverage subscriber) drives the 4-bit DAC codes and checks the analog output.
+  - `uvm_r_ladder_dac` — UVM/pyuvm-driven version of `r_ladder_dac` using the DPI-C AMS bridge (`tools/ams_sim.py`). The example is split into `sv/` (SystemVerilog UVM) and `py/` (pyuvm/cocotb) flows that share the DUT Verilog and the SPICE netlist.
 - `ttsky-analog-template/` is a standalone Tiny Tapeout analog-project template (its own `.git`, `info.yaml`, GitHub Actions). It is **not** wired into the CMake build.
 
 ## Build
@@ -49,22 +49,31 @@ The executable expects `config.yaml` as its only argument. Run it from the examp
 
 ### Python build driver (experimental)
 
-`tools/ams_sim.py` is an experimental Python driver that builds and runs examples without CMake.  It reads a per-example `bench.toml` manifest, builds a shared AMS core library once, and uses Verilator's `--binary` mode to compile the simulator.
+`tools/ams_sim.py` is an experimental Python driver that builds and runs examples without CMake.  It reads a per-example `bench.toml` manifest, builds a shared AMS core library (`build/core/libams_core.so`) once, and uses Verilator's `--binary` mode to compile the simulator.
 
-For UVM examples, use the per-example `run.sh` script. `UVM_ROOT` must be defined and point to your uvm-verilator source tree:
+The `bench.toml` manifest now has a `driver` field: `uvm` for the SystemVerilog UVM flow, or `pyuvm` for the pyuvm/cocotb flow.
+
+For the SV UVM flow, use the `sv/run.sh` script. `UVM_ROOT` must be defined and point to your uvm-verilator source tree:
 
 ```bash
-./examples/uvm_r_ladder_dac/run.sh --clean
+./examples/uvm_r_ladder_dac/sv/run.sh --clean
 ```
 
 Or invoke the driver directly:
 
 ```bash
-UVM_ROOT=$UVM_ROOT ./tools/ams_sim.py build uvm_r_ladder_dac
-UVM_ROOT=$UVM_ROOT ./tools/ams_sim.py run   uvm_r_ladder_dac
+UVM_ROOT=$UVM_ROOT ./tools/ams_sim.py build uvm_r_ladder_dac/sv
+UVM_ROOT=$UVM_ROOT ./tools/ams_sim.py run   uvm_r_ladder_dac/sv
 ```
 
-Requires `ngspice`, `yaml-cpp`, Verilator, and UVM to be discoverable (system packages or `NGSPICE_HOME` / `YAML_CPP_HOME`).
+For the pyuvm flow, the driver only builds `libams_core.so`; the cocotb Makefile in the example directory builds the Verilated DUT module and runs the Python testbench:
+
+```bash
+python3 tools/ams_sim.py build-core
+./examples/uvm_r_ladder_dac/py/run.sh
+```
+
+Requires `ngspice`, `yaml-cpp`, Verilator, and UVM (for the SV flow) or `cocotb` + `pyuvm` (for the Python flow) to be discoverable (system packages or `NGSPICE_HOME` / `YAML_CPP_HOME`).
 
 ## Wiring a new co-simulation
 
@@ -87,7 +96,7 @@ Look at `examples/*/main.cpp`:
 
 ### SystemVerilog-driven (UVM / DPI-C)
 
-Look at `examples/uvm_r_ladder_dac/`:
+Look at `examples/uvm_r_ladder_dac/sv/`:
 
 1. Import the DPI package: `import ams_dpi_pkg::*;`.
 2. Call `ams_init(config_path)` once in the test `start_of_simulation_phase()` to load the YAML config and start ngspice. Calling it in `run_phase` races the driver, which samples `ams_get_vdd()` at the start of its own `run_phase` and would see `0`.
@@ -97,6 +106,19 @@ Look at `examples/uvm_r_ladder_dac/`:
 6. Call `ams_finish()` at the end of simulation.
 
 The C++ side is implemented by `src/ams_dpi.cpp` + `include/ams/ams_bridge.h` (`AMSBridge`, a DUT-less implementation of `IAMSTestbench`). No per-example `main.cpp` is required.
+
+### Python-driven (pyuvm / cocotb)
+
+Look at `examples/uvm_r_ladder_dac/py/`:
+
+1. Import the reusable ctypes binding: `from ams import get_bridge`. `tools/ams_py/ams/` is the Python counterpart to `include/ams/ams_dpi_pkg.sv`.
+2. Call `get_bridge().init(config_path)` once in the test `start_of_simulation_phase()` to load the YAML config and start ngspice.
+3. A pyuvm sequence (`RLDacRampSequence`) sends 4-bit DAC codes to the agent's sequencer.
+4. The pyuvm driver drives the DUT's `code` port via cocotb, pushes the bits into ngspice with `ams_set_voltage`, advances the analog simulation with `ams_run_analog()`, and captures `ams_get_voltage("vout")`.
+5. The monitor receives the sampled result directly from the driver via a TLM analysis port and forwards it to the scoreboard and coverage collector.
+6. Call `get_bridge().finish()` at the end of simulation.
+
+Both the SV and Python flows link against the same `build/core/libams_core.so` (Verilator links it into the SV simulator binary; Python loads it via `ctypes`). The DUT Verilog (`r_ladder_dac_dut.sv`) and the SPICE netlist are shared between the two flows.
 
 ## Config YAML semantics
 

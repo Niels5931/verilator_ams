@@ -154,23 +154,25 @@ def get_cxx():
     return os.environ.get("CXX", "c++")
 
 
-def discover_deps():
+def discover_deps(need_uvm=True):
     verilator_bin = find_program("verilator")
-    return {
+    deps = {
         "verilator": verilator_bin,
         "verilator_root": find_verilator_root(verilator_bin),
         "cxx": get_cxx(),
-        "uvm_root": find_uvm(),
         "ngspice_inc": find_ngspice(),
         "yaml_cpp": find_yaml_cpp(),
     }
+    if need_uvm:
+        deps["uvm_root"] = find_uvm()
+    return deps
 
 
 def build_core_lib(deps, force=False):
-    """Build libams_lib.a once and reuse it across examples."""
+    """Build libams_core.so once and reuse it across examples."""
     core_dir = BUILD_ROOT / "core"
     core_dir.mkdir(parents=True, exist_ok=True)
-    lib = core_dir / "libams_lib.a"
+    lib = core_dir / "libams_core.so"
 
     if lib.exists() and not force:
         return lib
@@ -182,18 +184,21 @@ def build_core_lib(deps, force=False):
     for d in ng_inc + yc_inc + [str(REPO_ROOT / "include")]:
         inc_flags.extend(["-I", d])
 
-    objects = []
-    for src in ["src/ngspice_interface.cpp", "src/ams_dpi.cpp"]:
-        obj = core_dir / (Path(src).stem + ".o")
-        objects.append(obj)
-        run_cmd([
-            deps["cxx"], "-std=c++17", "-fcoroutines", "-fPIC", "-O2", "-c",
-            *inc_flags,
-            str(REPO_ROOT / src),
-            "-o", str(obj),
-        ])
+    ld_flags = []
+    for d in ng_lib + yc_lib:
+        ld_flags.extend(["-L", d])
+    ld_flags.extend(ng_libs)
+    ld_flags.extend(yc_libs)
+    ld_flags.extend(["-lpthread", "-ldl"])
 
-    run_cmd(["ar", "rcs", str(lib), *map(str, objects)])
+    run_cmd([
+        deps["cxx"], "-std=c++17", "-fcoroutines", "-fPIC", "-O2", "-shared",
+        *inc_flags,
+        str(REPO_ROOT / "src" / "ngspice_interface.cpp"),
+        str(REPO_ROOT / "src" / "ams_dpi.cpp"),
+        *ld_flags,
+        "-o", str(lib),
+    ])
     return lib
 
 
@@ -203,7 +208,10 @@ def load_bench(example):
     if not bench_path.exists():
         raise RuntimeError(f"bench.toml not found for example: {example}")
     with bench_path.open("rb") as f:
-        return tomllib.load(f)
+        bench = tomllib.load(f)
+    # Defaults
+    bench.setdefault("driver", "uvm")
+    return bench
 
 
 def resolve_sources(example_dir, bench, deps):
@@ -240,7 +248,8 @@ def build_binary(example_dir, bench, build_dir, deps, core_lib):
     for d in ng_inc + yc_inc:
         cflags.append(f"-I{d}")
 
-    ldflags = [str(core_lib)]
+    core_lib_dir = core_lib.parent
+    ldflags = [f"-L{core_lib_dir}", "-lams_core", f"-Wl,-rpath,{core_lib_dir}"]
     for d in ng_lib + yc_lib:
         ldflags.extend(["-L", d])
     ldflags.extend(ng_libs)
@@ -289,11 +298,19 @@ def build_binary(example_dir, bench, build_dir, deps, core_lib):
 def build_example(example, force_core=False):
     example_dir = REPO_ROOT / "examples" / example
     bench = load_bench(example)
+    driver = bench.get("driver", "uvm")
+
+    deps = discover_deps(need_uvm=(driver == "uvm"))
+    core_lib = build_core_lib(deps, force=force_core)
+
+    if driver == "pyuvm":
+        print(f"[AMS] libams_core.so: {core_lib}")
+        print("[AMS] pyuvm driver: cocotb Makefile in the example handles the DUT build.")
+        print("[AMS] Run with:  make -C examples/" + example + " SIM=verilator")
+        return core_lib
+
     build_dir = BUILD_ROOT / example
     build_dir.mkdir(parents=True, exist_ok=True)
-
-    deps = discover_deps()
-    core_lib = build_core_lib(deps, force=force_core)
     exe = build_binary(example_dir, bench, build_dir, deps, core_lib)
     print(f"[AMS] Built: {exe}")
     return exe
@@ -302,6 +319,17 @@ def build_example(example, force_core=False):
 def run_example(example):
     bench = load_bench(example)
     example_dir = REPO_ROOT / "examples" / example
+    driver = bench.get("driver", "uvm")
+
+    if driver == "pyuvm":
+        print("[AMS] pyuvm driver: running via cocotb Makefile")
+        env = os.environ.copy()
+        ld = str(BUILD_ROOT / "core")
+        env["LD_LIBRARY_PATH"] = ld + (":" + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
+        env["PYTHONPATH"] = str(REPO_ROOT / "tools" / "ams_py") + ":" + str(example_dir) + (":" + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+        run_cmd(["make", "-C", str(example_dir), "SIM=verilator"], env=env)
+        return
+
     build_dir = BUILD_ROOT / example
     verilator_dir = build_dir / "verilator"
     prefix = bench.get("prefix", f"V{bench['top']}")
@@ -323,12 +351,19 @@ def main():
     run_parser = subparsers.add_parser("run", help="Build if needed and run an example")
     run_parser.add_argument("example")
 
+    core_parser = subparsers.add_parser("build-core", help="Build only libams_core.so")
+    core_parser.add_argument("--force", action="store_true", help="Force rebuild")
+
     args = parser.parse_args()
 
     if args.cmd == "build":
         build_example(args.example, force_core=args.force_core)
     elif args.cmd == "run":
         run_example(args.example)
+    elif args.cmd == "build-core":
+        deps = discover_deps(need_uvm=False)
+        lib = build_core_lib(deps, force=args.force)
+        print(f"[AMS] libams_core.so: {lib}")
 
 
 if __name__ == "__main__":

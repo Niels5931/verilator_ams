@@ -9,7 +9,7 @@ set -e
 # the same --clean/--verbose interface as the other examples.
 
 EXAMPLE_DIR="$(cd "$(dirname "$0")" && pwd)"
-BUILD_DIR="${EXAMPLE_DIR}/../../build/uvm_r_ladder_dac"
+BUILD_DIR="${EXAMPLE_DIR}/../../../build/uvm_r_ladder_dac/sv"
 CLEAN=0
 VERBOSE=0
 
@@ -43,11 +43,11 @@ if [ "$VERBOSE" -eq 1 ]; then
     echo "=== Note: --verbose is not yet wired to the Python driver; continuing ==="
 fi
 
-DRIVER="${EXAMPLE_DIR}/../../tools/ams_sim.py"
+DRIVER="${EXAMPLE_DIR}/../../../tools/ams_sim.py"
 
 echo "=== Building UVM-driven R-ladder DAC AMS co-simulation ==="
-python3 "$DRIVER" build uvm_r_ladder_dac
+python3 "$DRIVER" build uvm_r_ladder_dac/sv
 
 echo "=== Running UVM-driven R-ladder DAC AMS co-simulation ==="
 cd "$EXAMPLE_DIR"
-exec python3 "$DRIVER" run uvm_r_ladder_dac
+exec python3 "$DRIVER" run uvm_r_ladder_dac/sv

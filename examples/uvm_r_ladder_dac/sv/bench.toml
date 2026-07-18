@@ -2,6 +2,7 @@ name = "uvm_r_ladder_dac"
 top = "ams_top"
 prefix = "Vams_top"
 uvm = true
+driver = "uvm"
 
 verilog = [
     "verilog/r_ladder_dac_if.sv",

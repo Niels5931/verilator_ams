@@ -3,6 +3,9 @@ build/
 
 # Simulation artifacts
 *.vcd
+sim_build/
+results.xml
+__pycache__/
 
 # Tiny Tapeout analog template has its own git repository
 ttsky-analog-template/

@@ -1,0 +1,5 @@
+# R-2R ladder DAC co-simulation configuration
+ams_cosim:
+  clock_period_ns: 100
+  vdd: 1.8
+  spice_netlist: ../../r_ladder_dac/spice/r_ladder_dac.spice

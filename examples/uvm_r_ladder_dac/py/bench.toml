@@ -1,0 +1,19 @@
+name = "pyuvm_r_ladder_dac"
+top = "ams_top"
+prefix = "Vams_top"
+driver = "pyuvm"
+
+verilog = [
+    "verilog/ams_top.sv",
+    "../sv/verilog/r_ladder_dac_dut.sv",
+]
+
+config = "config.yaml"
+
+cocotb_module = "tb.r_ladder_dac_test"
+
+verilator_args = [
+    "--trace",
+    "--assert",
+    "--timing",
+]
