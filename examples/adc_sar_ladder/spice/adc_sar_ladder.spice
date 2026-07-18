@@ -1,9 +1,0 @@
-* Ideal 4-bit SAR ADC using the r_ladder_dac SPICE netlist
-
-* Analog input to convert (substituted by C++ at runtime)
-VVIN vin 0 {VIN}
-
-* Ideal comparator: cmp_out = 1.8V when vin >= vout, else 0V
-Bcmp cmp_out 0 V=( V(vin) >= V(vout) ? 1.8 : 0.0 )
-
-.include ../../r_ladder_dac/spice/r_ladder_dac.spice

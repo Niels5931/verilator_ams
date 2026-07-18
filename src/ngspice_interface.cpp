@@ -17,10 +17,9 @@ namespace ams {
 
 static constexpr double TIME_EPSILON = 1e-12;
 
-// ngspice callbacks are registered once per process, but each test voltage in
-// the example loops creates a fresh NgSpiceInterface/AMSTestbench. Route all
-// callbacks through the currently active instance so we never call back into a
-// destroyed object.
+// ngspice callbacks are registered once per process, but the AMS bridge is
+// created once per simulation. Route all callbacks through the currently
+// active instance so we never call back into a destroyed object.
 static NgSpiceInterface* g_active_instance = nullptr;
 
 static int ams_send_char(char* str, int ident, void* userdata) {
