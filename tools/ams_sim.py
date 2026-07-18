@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""AMS build and run driver for Verilator + UVM + ngspice cosimulation.
+"""Build driver for the AMS co-simulation core library.
 
-This script replaces per-example CMakeLists.txt files.  Each example provides a
-bench.toml manifest; the driver discovers tools, builds a shared AMS core
-library once, verilates + compiles + links each example with Verilator's
---binary mode, and runs the resulting simulator.
+The only job of this script is to build ``build/core/libams_core.so`` from
+``src/ngspice_interface.cpp`` and ``src/ams_dpi.cpp``, linking the system
+ngspice + yaml-cpp.  Each example owns its own Makefile for the Verilator
+(SV UVM flow) or cocotb (pyuvm flow) build and run.
 
 Usage:
-    ./tools/ams_sim.py build uvm_r_ladder_dac
-    ./tools/ams_sim.py run   uvm_r_ladder_dac
+    ./tools/ams_sim.py build-core
 """
 
 import argparse
@@ -45,39 +44,6 @@ def pkg_config(name):
     except subprocess.CalledProcessError:
         libs = []
     return cflags, libs
-
-
-def find_program(name):
-    path = shutil.which(name)
-    if path is None:
-        raise RuntimeError(f"Required program not found: {name}")
-    return Path(path)
-
-
-def find_verilator_root(verilator_bin):
-    """Return the Verilator root directory (contains share/verilator/include)."""
-    try:
-        root = subprocess.check_output(
-            [str(verilator_bin), "--getenv", "VERILATOR_ROOT"],
-            text=True,
-        ).strip()
-        if root:
-            return Path(root)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        pass
-
-    # Fall back to the resolved binary's install layout:
-    #   <prefix>/bin/verilator -> <prefix>/share/verilator
-    resolved = verilator_bin.resolve()
-    candidate = resolved.parent.parent / "share" / "verilator"
-    if candidate.is_dir():
-        return candidate
-
-    candidate = resolved.parent / "share" / "verilator"
-    if candidate.is_dir():
-        return candidate
-
-    raise RuntimeError(f"Cannot determine Verilator root from {verilator_bin}")
 
 
 def find_ngspice():
@@ -140,32 +106,17 @@ def find_yaml_cpp():
     )
 
 
-def find_uvm():
-    root = os.environ.get("UVM_ROOT")
-    if not root:
-        raise RuntimeError("UVM_ROOT environment variable not set")
-    pkg = Path(root) / "uvm_pkg.sv"
-    if not pkg.exists():
-        raise RuntimeError(f"UVM package not found at {pkg}")
-    return Path(root)
-
-
 def get_cxx():
     return os.environ.get("CXX", "c++")
 
 
-def discover_deps(need_uvm=True):
-    verilator_bin = find_program("verilator")
-    deps = {
-        "verilator": verilator_bin,
-        "verilator_root": find_verilator_root(verilator_bin),
+def discover_deps():
+    """Discover the tools needed to build libams_core.so only."""
+    return {
         "cxx": get_cxx(),
         "ngspice_inc": find_ngspice(),
         "yaml_cpp": find_yaml_cpp(),
     }
-    if need_uvm:
-        deps["uvm_root"] = find_uvm()
-    return deps
 
 
 def build_core_lib(deps, force=False):
@@ -202,166 +153,20 @@ def build_core_lib(deps, force=False):
     return lib
 
 
-def load_bench(example):
-    import tomllib
-    bench_path = REPO_ROOT / "examples" / example / "bench.toml"
-    if not bench_path.exists():
-        raise RuntimeError(f"bench.toml not found for example: {example}")
-    with bench_path.open("rb") as f:
-        bench = tomllib.load(f)
-    # Defaults
-    bench.setdefault("driver", "uvm")
-    return bench
-
-
-def resolve_sources(example_dir, bench, deps):
-    """Return absolute paths of all Verilog/SystemVerilog sources."""
-    sources = []
-    if bench.get("uvm"):
-        sources.append(deps["uvm_root"] / "uvm_pkg.sv")
-        sources.append(REPO_ROOT / "include" / "ams" / "ams_dpi_pkg.sv")
-    for rel in bench["verilog"]:
-        src = example_dir / rel
-        if not src.exists():
-            raise RuntimeError(f"Verilog source not found: {src}")
-        sources.append(src)
-    return sources
-
-
-def build_binary(example_dir, bench, build_dir, deps, core_lib):
-    """Run Verilator --binary to verilate, compile, and link the simulator."""
-    verilator_dir = build_dir / "verilator"
-    verilator_dir.mkdir(parents=True, exist_ok=True)
-
-    top = bench["top"]
-    prefix = bench.get("prefix", f"V{top}")
-    uvm_root = deps["uvm_root"]
-    ams_inc = REPO_ROOT / "include" / "ams"
-
-    ng_inc, ng_lib, ng_libs = deps["ngspice_inc"]
-    yc_inc, yc_lib, yc_libs = deps["yaml_cpp"]
-
-    cflags = [
-        f"-I{REPO_ROOT / 'include'}",
-        f"-I{deps['verilator_root'] / 'include' / 'vltstd'}",
-    ]
-    for d in ng_inc + yc_inc:
-        cflags.append(f"-I{d}")
-
-    core_lib_dir = core_lib.parent
-    ldflags = [f"-L{core_lib_dir}", "-lams_core", f"-Wl,-rpath,{core_lib_dir}"]
-    for d in ng_lib + yc_lib:
-        ldflags.extend(["-L", d])
-    ldflags.extend(ng_libs)
-    ldflags.extend(yc_libs)
-    ldflags.extend(["-lpthread", "-ldl"])
-
-    cmd = [
-        str(deps["verilator"]),
-        "--binary",
-        "--top-module", top,
-        "--prefix", prefix,
-        "-Mdir", str(verilator_dir),
-        "--trace",
-        "--assert",
-        "--timing",
-        "-Wno-fatal",
-        f"+incdir+{uvm_root}",
-        f"+incdir+{ams_inc}",
-        "+define+UVM_NO_DPI",
-        "--build-jobs", str(os.cpu_count() or 4),
-    ]
-
-    for flag in cflags:
-        cmd.extend(["-CFLAGS", flag])
-    for flag in ldflags:
-        cmd.extend(["-LDFLAGS", flag])
-
-    for arg in bench.get("verilator_args", []):
-        cmd.append(arg)
-
-    for src in resolve_sources(example_dir, bench, deps):
-        cmd.append(str(src))
-
-    exe = verilator_dir / prefix
-    # Verilator's generated Makefile does not track external -LDFLAGS files as
-    # dependencies, so changing the core library would not trigger a relink.
-    # If the core library is newer than the executable, remove the executable
-    # so Verilator is forced to relink it.
-    if exe.exists() and core_lib.exists() and core_lib.stat().st_mtime > exe.stat().st_mtime:
-        exe.unlink()
-
-    run_cmd(cmd, cwd=example_dir)
-    return exe
-
-
-def build_example(example, force_core=False):
-    example_dir = REPO_ROOT / "examples" / example
-    bench = load_bench(example)
-    driver = bench.get("driver", "uvm")
-
-    deps = discover_deps(need_uvm=(driver == "uvm"))
-    core_lib = build_core_lib(deps, force=force_core)
-
-    if driver == "pyuvm":
-        print(f"[AMS] libams_core.so: {core_lib}")
-        print("[AMS] pyuvm driver: cocotb Makefile in the example handles the DUT build.")
-        print("[AMS] Run with:  make -C examples/" + example + " SIM=verilator")
-        return core_lib
-
-    build_dir = BUILD_ROOT / example
-    build_dir.mkdir(parents=True, exist_ok=True)
-    exe = build_binary(example_dir, bench, build_dir, deps, core_lib)
-    print(f"[AMS] Built: {exe}")
-    return exe
-
-
-def run_example(example):
-    bench = load_bench(example)
-    example_dir = REPO_ROOT / "examples" / example
-    driver = bench.get("driver", "uvm")
-
-    if driver == "pyuvm":
-        print("[AMS] pyuvm driver: running via cocotb Makefile")
-        env = os.environ.copy()
-        ld = str(BUILD_ROOT / "core")
-        env["LD_LIBRARY_PATH"] = ld + (":" + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
-        env["PYTHONPATH"] = str(REPO_ROOT / "tools" / "ams_py") + ":" + str(example_dir) + (":" + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-        run_cmd(["make", "-C", str(example_dir), "SIM=verilator"], env=env)
-        return
-
-    build_dir = BUILD_ROOT / example
-    verilator_dir = build_dir / "verilator"
-    prefix = bench.get("prefix", f"V{bench['top']}")
-    exe = verilator_dir / prefix
-    if not exe.exists():
-        exe = build_example(example)
-    config = bench.get("config", "config.yaml")
-    run_cmd([str(exe), config], cwd=example_dir)
-
-
 def main():
-    parser = argparse.ArgumentParser(description="AMS Verilator + UVM + ngspice driver")
+    parser = argparse.ArgumentParser(
+        description="Build driver for the AMS co-simulation core library (libams_core.so). "
+                    "Each example has its own Makefile for the Verilator/cocotb build and run.",
+    )
     subparsers = parser.add_subparsers(dest="cmd", required=True)
 
-    build_parser = subparsers.add_parser("build", help="Build an example")
-    build_parser.add_argument("example")
-    build_parser.add_argument("--force-core", action="store_true", help="Rebuild AMS core library")
-
-    run_parser = subparsers.add_parser("run", help="Build if needed and run an example")
-    run_parser.add_argument("example")
-
-    core_parser = subparsers.add_parser("build-core", help="Build only libams_core.so")
+    core_parser = subparsers.add_parser("build-core", help="Build libams_core.so")
     core_parser.add_argument("--force", action="store_true", help="Force rebuild")
 
     args = parser.parse_args()
 
-    if args.cmd == "build":
-        build_example(args.example, force_core=args.force_core)
-    elif args.cmd == "run":
-        run_example(args.example)
-    elif args.cmd == "build-core":
-        deps = discover_deps(need_uvm=False)
+    if args.cmd == "build-core":
+        deps = discover_deps()
         lib = build_core_lib(deps, force=args.force)
         print(f"[AMS] libams_core.so: {lib}")
 

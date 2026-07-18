@@ -45,7 +45,7 @@ $(AMS_CORE_LIB): $(AMS_SIM) $(AMS_CORE_SRCS)
 CUSTOM_SIM_DEPS += $(AMS_CORE_LIB)
 
 # Let the Makefile locate cocotb's makefiles without requiring cocotb-config
-# to be on the shell PATH.  `run.sh` can still override by exporting
+# to be on the shell PATH.  Callers can still override by exporting
 # COCOTB_MAKEFILES, since we use `?=`.
 COCOTB_MAKEFILES ?= $(shell python3 -m cocotb_tools.config --makefiles)
 

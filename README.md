@@ -27,17 +27,15 @@ The boundary supports:
 
 ## Build
 
-The primary build path is the Python driver (`tools/ams_sim.py`). CMake is retained only as an alternative way to produce `libams_core.so`; the supported example (`uvm_r_ladder_dac`) is **not** built by CMake.
-
-### Python driver (primary)
+`build/core/libams_core.so` is built by the Python driver:
 
 ```bash
 python3 tools/ams_sim.py build-core
 ```
 
-Builds `build/core/libams_core.so` from `src/ngspice_interface.cpp` + `src/ams_dpi.cpp`, linking the system ngspice + yaml-cpp. Requires `ngspice`, `yaml-cpp`, Verilator, and UVM (SV flow) or `cocotb` + `pyuvm` (Python flow) to be discoverable (system packages or `NGSPICE_HOME` / `YAML_CPP_HOME`).
+This compiles `src/ngspice_interface.cpp` + `src/ams_dpi.cpp` and links the system ngspice + yaml-cpp. `build-core` discovers ngspice and yaml-cpp via `NGSPICE_HOME` / `YAML_CPP_HOME` first, then `pkg-config`, then a few standard system paths (see `tools/ams_sim.py` for the exact list). Each example's Verilator/cocotb build is driven by its own `Makefile` in the example directory.
 
-### CMake (alternative for `libams_core.so` only)
+CMake is retained only as an alternative way to produce `libams_core.so`; the supported example (`uvm_r_ladder_dac`) is **not** built by CMake.
 
 ```bash
 cmake -S . -B build
@@ -50,27 +48,35 @@ cmake --build build --target ams_core
 
 ## Run an example
 
-The only supported example is `uvm_r_ladder_dac`, with two flows. Run from the example directory (`sv/` or `py/`) because `spice_netlist` paths in `config.yaml` are relative to it.
+The only supported example is `uvm_r_ladder_dac`, with two flows. Each flow is driven by a `Makefile` in the example directory. `spice_netlist` paths in `config.yaml` are relative to that directory, so just `cd` into `sv/` or `py/` and run `make`.
 
 ### SystemVerilog UVM flow
 
-`UVM_ROOT` must point to your uvm-verilator source tree (the directory containing `uvm_pkg.sv`).
+The SV Makefile links ngspice and yaml-cpp strictly through env vars — there is no `pkg-config` fallback on that path. Required variables:
+
+- `UVM_ROOT` — your uvm-verilator source tree (contains `uvm_pkg.sv`).
+- `NGSPICE_HOME` — ngspice install root (has `include/` and `lib/`).
+- `YAML_CPP_HOME` — yaml-cpp install root (has `include/` and `lib/`).
+- `VERILATOR_ROOT` — auto-detected from `verilator --getenv VERILATOR_ROOT`; override only if needed.
 
 ```bash
-./examples/uvm_r_ladder_dac/sv/run.sh --clean
-# or:
-UVM_ROOT=/path/to/uvm-verilator/src ./tools/ams_sim.py build uvm_r_ladder_dac/sv
-UVM_ROOT=/path/to/uvm-verilator/src ./tools/ams_sim.py run   uvm_r_ladder_dac/sv
+cd examples/uvm_r_ladder_dac/sv
+UVM_ROOT=/path/to/uvm-verilator/src \
+NGSPICE_HOME=/path/to/ngspice \
+YAML_CPP_HOME=/path/to/yaml-cpp \
+make
 ```
+
+The Makefile auto-builds `libams_core.so` via `tools/ams_sim.py build-core` (which still uses `pkg-config`/system-path discovery) if it is missing or stale, so you do not need to run `build-core` separately. Use `make clean` to wipe `sim_build/` and `libams_core.so`.
 
 ### pyuvm / cocotb flow
 
 ```bash
-python3 tools/ams_sim.py build-core
-./examples/uvm_r_ladder_dac/py/run.sh
+cd examples/uvm_r_ladder_dac/py
+make SIM=verilator
 ```
 
-The `bench.toml` manifest has a `driver` field: `uvm` for the SystemVerilog UVM flow, or `pyuvm` for the pyuvm/cocotb flow.
+The py Makefile auto-builds `libams_core.so` the same way the SV Makefile does. It needs `cocotb` and `pyuvm` importable by Python.
 
 ## Examples
 
